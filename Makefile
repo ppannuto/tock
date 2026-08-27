@@ -401,21 +401,22 @@ ci-job-readme-check:
 
 
 ### ci-runner-github-clippy jobs:
+#
+# One board per `arch/*` crate actually in use (tools/build/list_arch_boards.sh),
+# so clippy checks every architecture's target-specific code without
+# checking every board.
 .PHONY: ci-job-clippy
 ci-job-clippy:
 	$(call banner,CI-Job: Clippy)
 	@cargo clippy -- -D warnings
-	# Run `cargo clippy` in select boards so we run clippy with targets that
-	# actually check the arch-specific functions.
-	# 
-	# - nrf52840dk: cortex-m4
-	# - raspberry_pi_pico: cortex-m0
-	# - hifive1: riscv
-	# - qemu_i486_q35: x86
-	@cd boards/nordic/nrf52840dk && cargo clippy -- -D warnings
-	@cd boards/raspberry_pi_pico && cargo clippy -- -D warnings
-	@cd boards/hifive1 && cargo clippy -- -D warnings
-	@cd boards/qemu_i486_q35 && cargo clippy -Zjson-target-spec -- -D warnings
+	@arch_boards="`./tools/build/list_arch_boards.sh`" || exit 1;\
+		test -n "$$arch_boards" || (echo "error: list_arch_boards.sh returned no boards" >&2; exit 1);\
+		for b in $$arch_boards;\
+		do echo "$$(tput bold)Clippy $$b$$(tput sgr0)";\
+		cd boards/$$b || exit 1;\
+		cargo clippy -- -D warnings || exit 1;\
+		cd "$(CURDIR)" || exit 1;\
+		done
 
 
 
