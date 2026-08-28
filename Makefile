@@ -217,12 +217,21 @@ ci-nosetup:
 
 # Run the fast jobs.
 # This is designed for developers, to be run often and before submitting code upstream.
+#
+# These jobs write to separate target-triple subdirectories, so run them
+# concurrently once format-check (cheap, fails fast) passes on its own.
+# Only default our own -j if the user didn't pass one -- a submake's own
+# -j always overrides a parent's instead of merging with it. --output-sync
+# needs make >= 4.0 (e.g. macOS's bundled make is 3.81), so only pass it
+# if supported, since an unknown flag is a hard error, not a graceful skip.
+NPROC := $(or $(shell nproc 2>/dev/null),$(shell sysctl -n hw.ncpu 2>/dev/null),4)
+JOBS := $(if $(filter -j% --jobserver%,$(MAKEFLAGS)),,-j$(NPROC))
+OSYNC := $(if $(filter-out 0 1 2 3,$(firstword $(subst ., ,$(MAKE_VERSION)))),--output-sync=target,)
 .PHONY: prepush
-prepush:\
-	format-check\
-	ci-job-clippy\
-	ci-job-syntax\
-	licensecheck
+prepush:
+	@$(MAKE) format-check
+	@$(MAKE) $(OSYNC) $(JOBS) \
+		ci-job-clippy ci-job-syntax licensecheck
 	$(call banner,Pre-Push checks all passed!)
 	# Note: Tock runs additional and more intense CI checks on all PRs.
 	# If one of these error, you can run `make ci-job-NAME` to test locally.
@@ -405,18 +414,38 @@ ci-job-readme-check:
 # One board per `arch/*` crate actually in use (tools/build/list_arch_boards.sh),
 # so clippy checks every architecture's target-specific code without
 # checking every board.
+#
+# Split into sub-targets so `make -j` can run them concurrently instead of
+# back-to-back. They share one workspace `target/` dir, so on a clean
+# checkout they still partly serialize on `-Zbuild-std`'s lock; cached
+# (normal) runs don't.
+#
+# $(shell) doesn't fail the build on a nonzero exit, so an empty result
+# (the script errored, or a future change left it with nothing to say)
+# would otherwise silently generate zero board-specific clippy rules
+# below instead of failing loudly. Checked in ci-job-clippy's own recipe,
+# not a top-level $(error): this assignment runs on every `make`
+# invocation regardless of target (Make expands all rule headers up
+# front), so failing here would take down unrelated targets like `make
+# clean` whenever this script breaks.
+CLIPPY_ARCH_BOARDS := $(shell ./tools/build/list_arch_boards.sh)
+
 .PHONY: ci-job-clippy
-ci-job-clippy:
-	$(call banner,CI-Job: Clippy)
+ci-job-clippy: ci-job-clippy-workspace $(foreach b,$(CLIPPY_ARCH_BOARDS),ci-job-clippy-$(subst /,-,$(b)))
+	@test -n "$(CLIPPY_ARCH_BOARDS)" || (echo "error: list_arch_boards.sh returned no boards -- check it succeeded" >&2; exit 1)
+
+.PHONY: ci-job-clippy-workspace
+ci-job-clippy-workspace:
+	$(call banner,CI-Job: Clippy (workspace))
 	@cargo clippy -- -D warnings
-	@arch_boards="`./tools/build/list_arch_boards.sh`" || exit 1;\
-		test -n "$$arch_boards" || (echo "error: list_arch_boards.sh returned no boards" >&2; exit 1);\
-		for b in $$arch_boards;\
-		do echo "$$(tput bold)Clippy $$b$$(tput sgr0)";\
-		cd boards/$$b || exit 1;\
-		cargo clippy -- -D warnings || exit 1;\
-		cd "$(CURDIR)" || exit 1;\
-		done
+
+define clippy_arch_board_rule
+.PHONY: ci-job-clippy-$(subst /,-,$(1))
+ci-job-clippy-$(subst /,-,$(1)):
+	$$(call banner,CI-Job: Clippy ($(1)))
+	@cd boards/$(1) && cargo clippy -- -D warnings
+endef
+$(foreach b,$(CLIPPY_ARCH_BOARDS),$(eval $(call clippy_arch_board_rule,$(b))))
 
 
 
@@ -428,10 +457,14 @@ ci-job-clippy:
 # `rustflags` a crate already sets via its own `.cargo/config.toml`.
 DENY_WARNINGS_CARGO_CONFIG := $(CURDIR)/boards/cargo/deny_warnings.toml
 
+# Calls `cargo check` directly rather than via `$(MAKE) allcheck`: a
+# recursive $(MAKE) here bypasses --output-sync=target's buffering (the
+# child manages its own output), so under a parallel `prepush` its
+# compile output could land in the middle of another job's block.
 .PHONY: ci-job-syntax
 ci-job-syntax:
 	$(call banner,CI-Job: Syntax)
-	@TOCK_CARGO_FLAGS="--config $(DENY_WARNINGS_CARGO_CONFIG)" $(MAKE) allcheck
+	@cargo check --config $(DENY_WARNINGS_CARGO_CONFIG)
 
 .PHONY: ci-job-compilation
 ci-job-compilation:
