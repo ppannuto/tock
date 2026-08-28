@@ -7,6 +7,21 @@ code size and memory.
 New files should attempt to follow the coding style established by existing examples of similar
 functionality and should adhere to the rules in the [Tock Style Guide](./doc/Style.md).
 
+## Reviewing Your Own Work
+
+The rules below are the ones that come up most often. They are not the whole picture: most Tock
+defects are violations of the execution model rather than of the type system, so they compile
+cleanly and boot.
+
+When you finish a milestone worth judging as a unit -- a new capsule, a chip peripheral, a board,
+a refactor spanning several crates -- or when work is about to be submitted upstream, work
+through the [Code Review Checklist](./doc/code-review/README.md) before handing the change back.
+It covers the checks to run, the criteria each subsystem is held to, and the recurring defect
+classes, with instructions to confirm a finding against the code before reporting it.
+
+This is a heavy-weight pass; it is not meant to run after every edit. `make prepush` fills that
+role.
+
 ## Rust Code
 - All rust code (except in `tools/`) is embedded Rust code and limited to use of the core library
   (e.g. `use core::cell:Cell`). The std library (e.g. use `std::x`) is not allowed.
