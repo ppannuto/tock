@@ -382,7 +382,7 @@ impl<'b> VirtqueueDmaBuffer<'b> {
     unsafe fn into_virtqueue_buffer(self, fence: impl DmaFence) -> VirtqueueBuffer<'b> {
         match self {
             VirtqueueDmaBuffer::DeviceReadable(dma_sub_slice_mut_immut) => {
-                VirtqueueBuffer::DeviceReadable(dma_sub_slice_mut_immut.take())
+                VirtqueueBuffer::DeviceReadable(dma_sub_slice_mut_immut.into_inner())
             }
             VirtqueueDmaBuffer::DeviceWriteable(dma_sub_slice_mut) => {
                 VirtqueueBuffer::DeviceWriteable(unsafe { dma_sub_slice_mut.take(fence) })
