@@ -124,6 +124,7 @@ use crate::platform::dma_fence::DmaFence;
 /// read or write operation issued after this function returns, and which finish
 /// before the resulting [`DmaSlice`] is dropped.
 #[derive(Debug)]
+#[must_use]
 pub struct DmaSlice<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> {
     slice: &'a [T],
 }
@@ -214,6 +215,7 @@ impl<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSlice<'a, T> {
 /// trait. See the [zerocopy crate](https://docs.rs/zerocopy/0.8.31/zerocopy/)
 /// for a more in-depth explanation of these requirements.
 #[derive(Debug)]
+#[must_use]
 pub struct DmaSliceMut<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> {
     slice_ptr: NonNull<[T]>,
     _lt: PhantomData<&'a mut [T]>,
@@ -236,7 +238,6 @@ impl<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSliceMut<'a, T
     /// provide access to the underlying buffer without guaranteeing that the
     /// DMA operation has finished.  Users **must** eventually call
     /// [`take`](Self::take) to retrieve the underlying buffer.
-    #[must_use]
     pub unsafe fn new(slice: &mut [T], fence: impl DmaFence) -> DmaSliceMut<'_, T> {
         let dma_slice_mut = DmaSliceMut {
             slice_ptr: NonNull::from_mut(slice),
@@ -312,12 +313,13 @@ impl<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSliceMut<'a, T
 /// contents *must* not be modified by the DMA operation. For a DMA operation
 /// that may write to the supplied buffer, use [`DmaSliceMut`] instead.
 #[derive(Debug)]
+#[must_use]
 pub enum DmaSliceMutImmut<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> {
     Immutable(DmaSlice<'a, T>),
     Mutable(DmaSliceMut<'a, T>),
 }
 
-impl<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSliceMutImmut<'a, T> {
+impl<T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSliceMutImmut<'_, T> {
     /// Create a [`DmaSliceMutImmut`] from a shared, immutable Rust slice.
     ///
     /// This function uses the supplied `fence` object to ensure that all prior
@@ -374,7 +376,36 @@ impl<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSliceMutImmut<
     /// This is safe, as [`DmaSliceMutImmut`] can only be used for read-only DMA
     /// operations. The DMA hardware and software may read the underlying slice
     /// concurrently.
-    pub fn get(&self) -> &'a [T] {
+    ///
+    /// The returned reference borrows `self`. A [`DmaSliceMutImmut::Mutable`]
+    /// can be destructured and its [`DmaSliceMut`] turned back into a unique
+    /// slice, so a shared reference must not outlive it:
+    ///
+    /// ```compile_fail,E0505
+    /// # use kernel::platform::dma_fence::DmaFence;
+    /// # use kernel::utilities::dma_slice::DmaSliceMutImmut;
+    /// #
+    /// # #[derive(Debug, Copy, Clone)]
+    /// # struct SomeDmaFence;
+    /// # unsafe impl DmaFence for SomeDmaFence {
+    /// #     fn release<T>(self, _buf: *mut [T]) {}
+    /// #     fn acquire<T>(self, _buf: *mut [T]) {}
+    /// # }
+    /// #
+    /// let mut buffer = [0_u8; 4];
+    /// let dma_slice = DmaSliceMutImmut::new_mut(&mut buffer, SomeDmaFence);
+    /// let shared: &[u8] = dma_slice.get();
+    ///
+    /// let DmaSliceMutImmut::Mutable(dma_slice_mut) = dma_slice else {
+    ///     unreachable!()
+    /// };
+    /// // SAFETY: No DMA operation was started on this buffer.
+    /// let unique: &mut [u8] = unsafe { dma_slice_mut.take(SomeDmaFence) };
+    /// unique[0] = 1;
+    ///
+    /// assert_eq!(shared[0], 1);
+    /// ```
+    pub fn get(&self) -> &[T] {
         match self {
             DmaSliceMutImmut::Immutable(dma_slice) => dma_slice.get(),
             DmaSliceMutImmut::Mutable(dma_slice_mut) => {
@@ -382,9 +413,11 @@ impl<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSliceMutImmut<
                 // guarantees that no DMA operation modifies the buffer (and
                 // doing so would require an MMIO write, which is itself
                 // unsafe). The `dma_slice_mut` is capturing a unique, mutable
-                // borrow of the underlying slice over its lifetime `'a`. As
-                // such, we can safely hand out immutable references over this
-                // slice, which are also bound to the lifetime `'a`.
+                // borrow of the underlying slice for its whole lifetime, and
+                // only `DmaSliceMut::take` turns it back into a unique Rust
+                // slice. The returned reference borrows `self`, so it cannot
+                // outlive `dma_slice_mut` and alias the slice that `take`
+                // returns.
                 unsafe {
                     core::slice::from_raw_parts(
                         dma_slice_mut.as_mut_ptr().cast_const(),
@@ -413,6 +446,7 @@ impl<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSliceMutImmut<
 /// its contents must not be modified by the DMA operation. For a DMA operation
 /// that may write to the supplied buffer, use [`DmaSubSliceMut`] instead.
 #[derive(Debug)]
+#[must_use]
 pub struct DmaSubSlice<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> {
     sub_slice: SubSlice<'a, T>,
 }
@@ -519,6 +553,7 @@ impl<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSubSlice<'a, T
 /// trait. See the [zerocopy crate](https://docs.rs/zerocopy/0.8.31/zerocopy/)
 /// for a more in-depth explanation of these requirements.
 #[derive(Debug)]
+#[must_use]
 pub struct DmaSubSliceMut<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> {
     internal_slice_ptr: NonNull<[T]>,
     active_range: Range<usize>,
@@ -546,7 +581,6 @@ impl<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSubSliceMut<'a
     /// could provide access to the underlying buffer without guaranteeing that
     /// the DMA operation has finished. Users **must** eventually call
     /// [`take`](Self::take) to retrieve the underlying buffer.
-    #[must_use]
     pub unsafe fn new(
         sub_slice_mut: SubSliceMut<'_, T>,
         fence: impl DmaFence,
@@ -673,6 +707,7 @@ impl<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> DmaSubSliceMut<'a
 /// operation. For a DMA operation that may write to the active range of the
 /// supplied sub slice, use [`DmaSubSliceMut`] instead.
 #[derive(Debug)]
+#[must_use]
 pub enum DmaSubSliceMutImmut<'a, T: immutable_from_into_bytes::ImmutableFromIntoBytes> {
     Immutable(DmaSubSlice<'a, T>),
     Mutable(DmaSubSliceMut<'a, T>),
@@ -822,8 +857,10 @@ pub mod immutable_from_into_bytes {
 mod miri_tests {
     use core::ptr;
 
-    use super::super::leasable_buffer::{SubSlice, SubSliceMut};
-    use super::{DmaSlice, DmaSliceMut, DmaSubSlice, DmaSubSliceMut};
+    use super::super::leasable_buffer::{SubSlice, SubSliceMut, SubSliceMutImmut};
+    use super::{
+        DmaSlice, DmaSliceMut, DmaSliceMutImmut, DmaSubSlice, DmaSubSliceMut, DmaSubSliceMutImmut,
+    };
 
     /// A mock fence that does nothing, as Miri operations are sequential within
     /// a single thread for this test.
@@ -1056,5 +1093,112 @@ mod miri_tests {
             assert_eq!(arr[8], 99);
             assert_eq!(arr[9], 88);
         }
+    }
+
+    #[test]
+    fn test_dma_slice_mut_immut_immutable() {
+        let fence = unsafe { MockFence::new() };
+
+        let data = [1u8, 2, 3, 4];
+
+        let dma = DmaSliceMutImmut::new(&data, fence);
+        assert_eq!(dma.len(), 4);
+        assert_eq!(dma.as_ptr(), data.as_ptr());
+
+        // Simulate a DMA read while software also reads the buffer:
+        let val = unsafe { ptr::read(dma.as_ptr().add(2)) };
+        assert_eq!(val, 3);
+        assert_eq!(dma.get(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_dma_slice_mut_immut_mutable() {
+        let fence = unsafe { MockFence::new() };
+
+        let mut data = [1u16, 2, 3, 4];
+        let data_ptr = data.as_ptr();
+
+        let dma = DmaSliceMutImmut::new_mut(&mut data, fence);
+        assert_eq!(dma.len(), 4);
+        assert_eq!(dma.as_ptr(), data_ptr);
+
+        // Simulate a DMA read while software also reads the buffer:
+        let val = unsafe { ptr::read(dma.as_ptr().add(1)) };
+        assert_eq!(val, 2);
+        assert_eq!(dma.get(), &[1, 2, 3, 4]);
+
+        // Once the shared reference is no longer used, the unique slice can be
+        // recovered and written through:
+        let DmaSliceMutImmut::Mutable(dma_mut) = dma else {
+            panic!("new_mut must create a Mutable variant");
+        };
+        let restored = unsafe { dma_mut.take(fence) };
+        restored[0] = 10;
+        assert_eq!(restored, &[10, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_dma_slice_mut_immut_mutable_drop() {
+        let fence = unsafe { MockFence::new() };
+
+        let mut data = [1u8, 2, 3, 4];
+
+        // Dropping a `DmaSliceMutImmut` without recovering the slice is safe,
+        // as the DMA operation must not have written to it:
+        let dma = DmaSliceMutImmut::new_mut(&mut data, fence);
+        assert_eq!(dma.get()[3], 4);
+        drop(dma);
+
+        data[3] = 40;
+        assert_eq!(data, [1, 2, 3, 40]);
+    }
+
+    #[test]
+    fn test_dma_sub_slice_mut_immut_immutable() {
+        let fence = unsafe { MockFence::new() };
+
+        let data = [10u8, 11, 12, 13, 14];
+
+        let mut sub = SubSliceMutImmut::from(&data[..]);
+        sub.slice(1..4);
+
+        let dma = DmaSubSliceMutImmut::new(sub, fence);
+        assert_eq!(dma.len(), 3);
+        assert_eq!(dma.as_ptr(), data[1..].as_ptr());
+
+        let val = unsafe { ptr::read(dma.as_ptr().add(2)) };
+        assert_eq!(val, 13);
+
+        let SubSliceMutImmut::Immutable(restored) = dma.take() else {
+            panic!("an Immutable SubSliceMutImmut must be restored as Immutable");
+        };
+        assert_eq!(restored.active_range(), 1..4);
+        assert_eq!(restored.take(), &[10, 11, 12, 13, 14]);
+    }
+
+    #[test]
+    fn test_dma_sub_slice_mut_immut_mutable() {
+        let fence = unsafe { MockFence::new() };
+
+        let mut data = [10u32, 11, 12, 13, 14];
+        let data_ptr = data.as_ptr();
+
+        let mut sub = SubSliceMutImmut::from(&mut data[..]);
+        sub.slice(2..5);
+
+        let dma = DmaSubSliceMutImmut::new(sub, fence);
+        assert_eq!(dma.len(), 3);
+        assert_eq!(dma.as_ptr(), data_ptr.wrapping_add(2));
+
+        let val = unsafe { ptr::read(dma.as_ptr()) };
+        assert_eq!(val, 12);
+
+        let SubSliceMutImmut::Mutable(restored) = dma.take() else {
+            panic!("a Mutable SubSliceMutImmut must be restored as Mutable");
+        };
+        assert_eq!(restored.active_range(), 2..5);
+        let full_slice = restored.take();
+        full_slice[0] = 100;
+        assert_eq!(full_slice, &[100, 11, 12, 13, 14]);
     }
 }
