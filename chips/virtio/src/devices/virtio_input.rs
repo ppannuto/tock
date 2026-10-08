@@ -12,7 +12,7 @@
 
 use kernel::platform::dma_fence::DmaFence;
 use kernel::utilities::cells::OptionalCell;
-use kernel::utilities::leasable_buffer::{SubSliceMut, SubSliceMutImmut};
+use kernel::utilities::leasable_buffer::SubSliceMut;
 
 use crate::devices::{VirtIODeviceDriver, VirtIODeviceType};
 use crate::queues::split_queue::{
@@ -99,13 +99,14 @@ impl<F: DmaFence> SplitVirtqueueClient<'static> for VirtIOInput<'_, F> {
 
             // Process the incoming key. If this is the SYN_REPORT then our key
             // press is finished and we can call the client.
-            let VirtqueueBuffer::DeviceWriteable(event_sub_slice_mut) = buffer_chain[0]
+            let event_sub_slice_mut = buffer_chain[0]
                 .take()
                 .expect("Split Virtqueue buffer_chain_ready but no buffer!")
                 .virtqueue_buffer
-            else {
-                panic!("Split Virtqueue returned DeviceReadable buffer for VirtIO input driver")
-            };
+                .into_writeable()
+                .expect(
+                    "VirtIO input returned a buffer other than DeviceWriteable for event queue",
+                );
             let event_slice = event_sub_slice_mut.take();
 
             let end = if let Ok((event_type, event_code, event_value)) = parse_event(event_slice) {
@@ -152,16 +153,14 @@ impl<F: DmaFence> SplitVirtqueueClient<'static> for VirtIOInput<'_, F> {
         } else if queue_number == self.statusq.queue_number().unwrap() {
             // Sent a status update
 
-            let VirtqueueBuffer::DeviceReadable(SubSliceMutImmut::Mutable(status_sub_slice_mut)) =
-                buffer_chain[0]
-                    .take()
-                    .expect("No status buffer")
-                    .virtqueue_buffer
-            else {
-                panic!(
-                    "VirtIO input returned either DeviceWritable buffer or Immutable sub slice for status queue"
-                )
-            };
+            let status_sub_slice_mut = buffer_chain[0]
+                .take()
+                .expect("No status buffer")
+                .virtqueue_buffer
+                .into_readable_mut()
+                .expect(
+                    "VirtIO input returned a buffer other than DeviceReadableMut for status queue",
+                );
 
             self.status_buffer.replace(status_sub_slice_mut.take());
         }

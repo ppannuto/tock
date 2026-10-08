@@ -56,11 +56,11 @@ impl<'a, 'b, F: DmaFence> VirtIORng<'a, 'b, F> {
             Err(ErrorCode::NOMEM) => {
                 // Hand back the buffer, the queue MUST NOT write partial
                 // buffer chains
-                let VirtqueueBuffer::DeviceWriteable(sub_slice_mut) =
-                    buffer_chain[0].take().unwrap()
-                else {
-                    panic!("SplitVirtqueue returned DeviceReadable buffer!")
-                };
+                let sub_slice_mut = buffer_chain[0]
+                    .take()
+                    .unwrap()
+                    .into_writeable()
+                    .expect("SplitVirtqueue returned a buffer other than DeviceWriteable!");
                 Err((sub_slice_mut.take(), ErrorCode::NOMEM))
             }
             Err(e) => panic!("Unexpected error {:?}", e),
@@ -86,11 +86,10 @@ impl<'a, 'b, F: DmaFence> VirtIORng<'a, 'b, F> {
 
         // We only have buffer chains of a single buffer
         let virtqueue_return_buffer = buffer_chain[0].take().unwrap();
-        let VirtqueueBuffer::DeviceWriteable(sub_slice_mut) =
-            virtqueue_return_buffer.virtqueue_buffer
-        else {
-            panic!("SplitVirtqueue returned DeviceReadable buffer!")
-        };
+        let sub_slice_mut = virtqueue_return_buffer
+            .virtqueue_buffer
+            .into_writeable()
+            .expect("SplitVirtqueue returned a buffer other than DeviceWriteable!");
         let buf = sub_slice_mut.take();
 
         // We have taken out a buffer, hence decrease the available capacity

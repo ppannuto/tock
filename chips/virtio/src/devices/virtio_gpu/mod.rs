@@ -10,7 +10,7 @@ use kernel::deferred_call::{DeferredCall, DeferredCallClient};
 use kernel::hil::screen::{Screen, ScreenClient, ScreenPixelFormat, ScreenRotation};
 use kernel::platform::dma_fence::DmaFence;
 use kernel::utilities::cells::{OptionalCell, TakeCell};
-use kernel::utilities::leasable_buffer::{SubSliceMut, SubSliceMutImmut};
+use kernel::utilities::leasable_buffer::SubSliceMut;
 
 use super::super::devices::{VirtIODeviceDriver, VirtIODeviceType};
 use super::super::queues::split_queue::{
@@ -202,9 +202,7 @@ impl<'a, 'b, F: DmaFence> VirtIOGPU<'a, 'b, F> {
         resp_buffer.slice(0..ResourceCreate2DResp::ENCODED_SIZE);
 
         let mut buffer_chain = [
-            Some(VirtqueueBuffer::DeviceReadable(SubSliceMutImmut::Mutable(
-                req_buffer,
-            ))),
+            Some(VirtqueueBuffer::DeviceReadableMut(req_buffer)),
             Some(VirtqueueBuffer::DeviceWriteable(resp_buffer)),
         ];
         self.control_queue
@@ -252,9 +250,7 @@ impl<'a, 'b, F: DmaFence> VirtIOGPU<'a, 'b, F> {
         resp_buffer.slice(0..ResourceAttachBackingResp::ENCODED_SIZE);
 
         let mut buffer_chain = [
-            Some(VirtqueueBuffer::DeviceReadable(SubSliceMutImmut::Mutable(
-                req_buffer,
-            ))),
+            Some(VirtqueueBuffer::DeviceReadableMut(req_buffer)),
             Some(VirtqueueBuffer::DeviceWriteable(resp_buffer)),
         ];
         self.control_queue
@@ -297,9 +293,7 @@ impl<'a, 'b, F: DmaFence> VirtIOGPU<'a, 'b, F> {
         resp_buffer.slice(0..SetScanoutResp::ENCODED_SIZE);
 
         let mut buffer_chain = [
-            Some(VirtqueueBuffer::DeviceReadable(SubSliceMutImmut::Mutable(
-                req_buffer,
-            ))),
+            Some(VirtqueueBuffer::DeviceReadableMut(req_buffer)),
             Some(VirtqueueBuffer::DeviceWriteable(resp_buffer)),
         ];
         self.control_queue
@@ -335,9 +329,7 @@ impl<'a, 'b, F: DmaFence> VirtIOGPU<'a, 'b, F> {
         resp_buffer.slice(0..ResourceDetachBackingResp::ENCODED_SIZE);
 
         let mut buffer_chain = [
-            Some(VirtqueueBuffer::DeviceReadable(SubSliceMutImmut::Mutable(
-                req_buffer,
-            ))),
+            Some(VirtqueueBuffer::DeviceReadableMut(req_buffer)),
             Some(VirtqueueBuffer::DeviceWriteable(resp_buffer)),
         ];
 
@@ -461,9 +453,7 @@ impl<'a, 'b, F: DmaFence> VirtIOGPU<'a, 'b, F> {
             resp_buffer.slice(0..ResourceDetachBackingResp::ENCODED_SIZE);
 
             let mut buffer_chain = [
-                Some(VirtqueueBuffer::DeviceReadable(SubSliceMutImmut::Mutable(
-                    req_buffer,
-                ))),
+                Some(VirtqueueBuffer::DeviceReadableMut(req_buffer)),
                 Some(VirtqueueBuffer::DeviceWriteable(resp_buffer)),
             ];
             self.control_queue
@@ -513,9 +503,7 @@ impl<'a, 'b, F: DmaFence> VirtIOGPU<'a, 'b, F> {
         resp_buffer.slice(0..TransferToHost2DResp::ENCODED_SIZE);
 
         let mut buffer_chain = [
-            Some(VirtqueueBuffer::DeviceReadable(SubSliceMutImmut::Mutable(
-                req_buffer,
-            ))),
+            Some(VirtqueueBuffer::DeviceReadableMut(req_buffer)),
             Some(VirtqueueBuffer::DeviceWriteable(resp_buffer)),
         ];
         self.control_queue
@@ -552,9 +540,7 @@ impl<'a, 'b, F: DmaFence> VirtIOGPU<'a, 'b, F> {
         resp_buffer.slice(0..ResourceFlushResp::ENCODED_SIZE);
 
         let mut buffer_chain = [
-            Some(VirtqueueBuffer::DeviceReadable(SubSliceMutImmut::Mutable(
-                req_buffer,
-            ))),
+            Some(VirtqueueBuffer::DeviceReadableMut(req_buffer)),
             Some(VirtqueueBuffer::DeviceWriteable(resp_buffer)),
         ];
         self.control_queue
@@ -652,24 +638,19 @@ impl<'a, 'b, F: DmaFence> VirtIOGPU<'a, 'b, F> {
             .get_mut(0)
             .and_then(|opt_buf| opt_buf.take())
             .expect("Missing request buffer in VirtIO GPU buffer chain");
-        let VirtqueueBuffer::DeviceReadable(req_sub_slice_mut_immut) =
-            req_virtqueue_buffer.virtqueue_buffer
-        else {
-            panic!("Split Virtqueue returned DeviceWriteable buffer for request!")
-        };
-        let SubSliceMutImmut::Mutable(mut req_sub_slice_mut) = req_sub_slice_mut_immut else {
-            panic!("Returned VirtIO GPU request buffer is immutable!")
-        };
+        let mut req_sub_slice_mut = req_virtqueue_buffer
+            .virtqueue_buffer
+            .into_readable_mut()
+            .expect("Split Virtqueue returned a buffer other than DeviceReadableMut for request!");
 
         let resp_virtqueue_buffer = buffer_chain
             .get_mut(1)
             .and_then(|opt_buf| opt_buf.take())
             .expect("Missing request buffer in VirtIO GPU buffer chain");
-        let VirtqueueBuffer::DeviceWriteable(mut resp_sub_slice_mut) =
-            resp_virtqueue_buffer.virtqueue_buffer
-        else {
-            panic!("Split Virtqueue returned DeviceReadable buffer for response!")
-        };
+        let mut resp_sub_slice_mut = resp_virtqueue_buffer
+            .virtqueue_buffer
+            .into_writeable()
+            .expect("Split Virtqueue returned a buffer other than DeviceWriteable for response!");
 
         // Check that the response has a length we can parse into a CtrlHeader:
         if resp_virtqueue_buffer.device_len < CtrlHeader::ENCODED_SIZE {
@@ -1004,9 +985,7 @@ impl<'a, F: DmaFence> Screen<'a> for VirtIOGPU<'a, '_, F> {
         resp_buffer.slice(0..ResourceAttachBackingResp::ENCODED_SIZE);
 
         let mut buffer_chain = [
-            Some(VirtqueueBuffer::DeviceReadable(SubSliceMutImmut::Mutable(
-                req_buffer,
-            ))),
+            Some(VirtqueueBuffer::DeviceReadableMut(req_buffer)),
             Some(VirtqueueBuffer::DeviceWriteable(resp_buffer)),
         ];
         self.control_queue
