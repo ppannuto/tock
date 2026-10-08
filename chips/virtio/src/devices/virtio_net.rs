@@ -300,6 +300,23 @@ impl<'a, F: DmaFence> EthernetAdapterDatapath<'a> for VirtIONet<'a, F> {
         self.txqueue
             .provide_buffer_chain(&mut buffer_chain)
             .map_err(move |ret| {
+                let VirtqueueBuffer::DeviceReadable(tx_header_sub_slice_mut_immut) =
+                    buffer_chain[0].take().unwrap()
+                else {
+                    panic!("VirtQueue returned DeviceWriteable buffer")
+                };
+                let SubSliceMutImmut::Mutable(tx_header_sub_slice_mut) =
+                    tx_header_sub_slice_mut_immut
+                else {
+                    panic!("tx_header SubSliceMutImmut is not mutable!")
+                };
+                self.tx_header.replace(
+                    tx_header_sub_slice_mut
+                        .take()
+                        .try_into()
+                        .expect("tx_header slice was truncated"),
+                );
+
                 let VirtqueueBuffer::DeviceReadable(tx_frame_sub_slice_mut_immut) =
                     buffer_chain[1].take().unwrap()
                 else {
