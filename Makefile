@@ -16,6 +16,11 @@ $(eval ALL_BOARDS := $(shell ./tools/build/list_boards.sh))
 # Force the Shell to be bash as some systems have strange default shells
 SHELL := bash
 
+# Install the toolchain pinned in rust-toolchain.toml (if rustup manages it)
+# before any recipe runs. Otherwise, under `make -j`, every concurrent cargo
+# invocation tries to auto-install it at once, and the installs race and fail.
+$(eval _ := $(shell command -v cargo > /dev/null && cargo --version))
+
 ##
 ## End: internal support.
 ##
